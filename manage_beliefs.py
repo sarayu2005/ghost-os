@@ -26,19 +26,30 @@ def add_new_belief(username: str):
     if not user_id:
         print(f"❌ User '{username}' not found")
         return
-    
+
     print(f"\n➕ Adding new belief for {username}...")
     belief = input("   Belief: ").strip()
     category = input("   Category (default: general): ").strip() or "general"
     strength = input("   Strength 0.0-1.0 (default: 0.8): ").strip()
-    
+    counter = input("   Counter-argument (steelman the other side, optional): ").strip() or None
+
     try:
         strength = float(strength) if strength else 0.8
     except:
         strength = 0.8
-    
+
     strength = max(0.0, min(1.0, strength))
-    add_belief(user_id, belief, category, strength)
+    belief_id = add_belief(user_id, belief, category, strength)
+
+    if counter and belief_id:
+        from db.database import get_db_connection
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE beliefs SET counter_argument = %s WHERE id = %s", (counter, belief_id))
+        conn.commit()
+        cur.close()
+        conn.close()
+
     print(f"✅ Belief added!")
 
 def delete_belief_menu(username: str):

@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Ghost OS - Content Review Dashboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #f5f7fa;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        header {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            color: #1a1a1a;
+            margin-bottom: 10px;
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        
+        .status-pending { background: #fff3cd; color: #856404; }
+        .status-approved { background: #d4edda; color: #155724; }
+        .status-rejected { background: #f8d7da; color: #721c24; }
+        
+        .content-card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        
+        .content-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 15px;
+        }
+        
+        .content-type {
+            font-size: 12px;
+            font-weight: 600;
+            color: #0066cc;
+            text-transform: uppercase;
+        }
+        
+        .content-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #1a1a1a;
+            margin: 10px 0;
+        }
+        
+        .content-text {
+            background: #f9f9f9;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 15px 0;
+            line-height: 1.6;
+            color: #333;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .content-meta {
+            display: flex;
+            gap: 20px;
+            font-size: 13px;
+            color: #666;
+            margin: 15px 0;
+        }
+        
+        .quality-score {
+            display: inline-block;
+            background: #e3f2fd;
+            color: #1565c0;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: 600;
+        }
+        
+        .actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+        
+        button {
+            padding: 10px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .btn-approve {
+            background: #28a745;
+            color: white;
+        }
+        
+        .btn-approve:hover {
+            background: #218838;
+        }
+        
+        .btn-reject {
+            background: #dc3545;
+            color: white;
+        }
+        
+        .btn-reject:hover {
+            background: #c82333;
+        }
+        
+        .btn-edit {
+            background: #0066cc;
+            color: white;
+        }
+        
+        .btn-edit:hover {
+            background: #0052a3;
+        }
+        
+        .edit-form {
+            display: none;
+            margin-top: 15px;
+            padding: 15px;
+            background: #f9f9f9;
+            border-radius: 6px;
+        }
+        
+        .edit-form.active {
+            display: block;
+        }
+        
+        textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 13px;
+            resize: vertical;
+            margin-bottom: 10px;
+            min-height: 200px;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+        }
+        
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+                <div>
+                    <h1>👻 Ghost OS - Content Review</h1>
+                    <p>Review and approve content before publishing to social media</p>
+                </div>
+                <div id="linkedin-status">
+                    <a href="/auth/linkedin?user_id=1" id="linkedin-btn"
+                       style="display:inline-block; padding:10px 18px; background:#0a66c2; color:white;
+                              border-radius:6px; text-decoration:none; font-weight:600; font-size:14px;">
+                        🔗 Connect LinkedIn
+                    </a>
+                </div>
+            </div>
+        </header>
+        
+        <div id="content-list"></div>
+        <div id="empty-state" class="empty-state" style="display:none;">
+            <div class="empty-state-icon">📭</div>
+            <h2>No pending content</h2>
+            <p>All content has been reviewed!</p>
+        </div>
+    </div>
+    
+    <script>
+        const USER_ID = 1;
+
+        function createCard(item) {
+            const card = document.createElement('div');
+            card.className = 'content-card';
+
+            // Header
+            card.insertAdjacentHTML('beforeend', `
+                <div class="content-header">
+                    <div>
+                        <span class="content-type">${item.content_type}</span>
+                        <div class="content-title"></div>
+                    </div>
+                    <span class="status-badge status-${item.status || 'pending'}">${(item.status || 'pending').toUpperCase()}</span>
+                </div>
+            `);
+            card.querySelector('.content-title').textContent = item.news_title || '';
+
+            // Meta row
+            card.insertAdjacentHTML('beforeend', `
+                <div class="content-meta">
+                    <span><strong>Quality:</strong> <span class="quality-score">${(item.quality_score || 0).toFixed(2)}/1.0</span></span>
+                    ${item.conviction_score != null ? `<span><strong>Conviction:</strong> <span class="quality-score" style="background:#e8f5e9;color:#2e7d32;">${item.conviction_score.toFixed(2)}/1.0</span></span>` : ''}
+                    <span><strong>Created:</strong> ${new Date(item.created_at).toLocaleDateString()}</span>
+                </div>
+            `);
+
+            // Matched beliefs
+            if (item.matched_beliefs_json && item.matched_beliefs_json.length > 0) {
+                const beliefsDiv = document.createElement('div');
+                beliefsDiv.style.cssText = 'margin:8px 0 12px;padding:10px 14px;background:#f0f4ff;border-radius:6px;font-size:13px;';
+                const label = document.createElement('span');
+                label.style.cssText = 'font-weight:600;color:#3730a3;display:block;margin-bottom:6px;';
+                label.textContent = '💭 Beliefs matched:';
+                beliefsDiv.appendChild(label);
+                item.matched_beliefs_json.slice(0, 3).forEach(b => {
+                    const tag = document.createElement('span');
+                    tag.style.cssText = 'display:inline-block;margin:2px 4px 2px 0;padding:3px 8px;background:#e0e7ff;color:#3730a3;border-radius:12px;font-size:12px;';
+                    tag.textContent = `${b.belief.slice(0, 50)}${b.belief.length > 50 ? '…' : ''} · ${(b.match_score * 100).toFixed(0)}%`;
+                    beliefsDiv.appendChild(tag);
+                });
+                card.appendChild(beliefsDiv);
+            }
+
+            // Content text — textContent so markdown/special chars render safely
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'content-text';
+            contentDiv.style.whiteSpace = 'pre-wrap';
+            contentDiv.textContent = item.generated_text || '';
+            card.appendChild(contentDiv);
+
+            // Action buttons
+            card.insertAdjacentHTML('beforeend', `
+                <div class="actions">
+                    <button class="btn-edit" onclick="toggleEdit(${item.id})">✏️ Edit</button>
+                    <button class="btn-approve" onclick="approve(${item.id})">✅ Approve</button>
+                    <button class="btn-reject" onclick="reject(${item.id})">❌ Reject</button>
+                </div>
+            `);
+
+            // Edit form
+            const editForm = document.createElement('div');
+            editForm.className = 'edit-form';
+            editForm.id = `edit-${item.id}`;
+
+            const textarea = document.createElement('textarea');
+            textarea.id = `text-${item.id}`;
+            textarea.textContent = item.generated_text || '';
+            editForm.appendChild(textarea);
+
+            editForm.insertAdjacentHTML('beforeend', `
+                <div class="actions">
+                    <button class="btn-approve" onclick="saveEdit(${item.id})">💾 Save Changes</button>
+                    <button class="btn-reject" onclick="toggleEdit(${item.id})">Cancel</button>
+                </div>
+            `);
+            card.appendChild(editForm);
+
+            return card;
+        }
+
+        async function loadContent() {
+            try {
+                const response = await fetch(`/api/user/${USER_ID}/pending`);
+                const pending = await response.json();
+
+                const list = document.getElementById('content-list');
+                const emptyState = document.getElementById('empty-state');
+
+                if (!pending || pending.length === 0) {
+                    emptyState.style.display = 'block';
+                    list.innerHTML = '';
+                    return;
+                }
+
+                emptyState.style.display = 'none';
+                list.innerHTML = '';
+                pending.forEach(item => list.appendChild(createCard(item)));
+
+            } catch (error) {
+                console.error('Error loading content:', error);
+                document.getElementById('content-list').innerHTML =
+                    `<p style="color:red;padding:20px;">Error: ${error.message}</p>`;
+            }
+        }
+        
+        function toggleEdit(contentId) {
+            document.getElementById(`edit-${contentId}`).classList.toggle('active');
+        }
+        
+        async function saveEdit(contentId) {
+            const newText = document.getElementById(`text-${contentId}`).value;
+            try {
+                await fetch(`/api/content/${contentId}/edit`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: USER_ID, text: newText })
+                });
+                alert('Content updated!');
+                toggleEdit(contentId);
+                loadContent();
+            } catch (error) {
+                alert('Error updating content');
+            }
+        }
+        
+        async function approve(contentId) {
+            if (!confirm('Approve this content?')) return;
+            try {
+                await fetch(`/api/content/${contentId}/approve`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: USER_ID })
+                });
+                alert('Content approved!');
+                loadContent();
+            } catch (error) {
+                alert('Error approving content');
+            }
+        }
+        
+        async function reject(contentId) {
+            const reason = prompt('Rejection reason:');
+            if (!reason) return;
+            try {
+                await fetch(`/api/content/${contentId}/reject`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: USER_ID, reason })
+                });
+                alert('Content rejected!');
+                loadContent();
+            } catch (error) {
+                alert('Error rejecting content');
+            }
+        }
+        
+        async function checkLinkedIn() {
+            try {
+                const resp = await fetch(`/api/user/${USER_ID}/linkedin_status`);
+                const data = await resp.json();
+                const btn = document.getElementById('linkedin-btn');
+                if (data.connected) {
+                    btn.textContent = '✅ LinkedIn Connected';
+                    btn.style.background = '#28a745';
+                    btn.removeAttribute('href');
+                    btn.style.cursor = 'default';
+                }
+            } catch(e) {}
+        }
+
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('linkedin_connected')) {
+            const name = params.get('name') || 'You';
+            alert(`LinkedIn connected for ${name}! LinkedIn posts will now auto-publish on approval.`);
+            history.replaceState({}, '', '/');
+        }
+
+        loadContent();
+        checkLinkedIn();
+        setInterval(loadContent, 30000);
+    </script>
+</body>
+</html>

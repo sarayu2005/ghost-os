@@ -1,9 +1,17 @@
 from groq import Groq
 import os
 import json
+import re
 from dotenv import load_dotenv
 from pathlib import Path
 from db.database import get_user_beliefs, add_belief_match
+
+def _parse_llm_json(text: str) -> dict:
+    text = text.strip()
+    match = re.search(r'```(?:json)?\s*(.*?)\s*```', text, re.DOTALL)
+    if match:
+        text = match.group(1).strip()
+    return json.loads(text)
 
 env_path = Path(__file__).parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
@@ -36,7 +44,8 @@ def match_beliefs_to_news(user_id: int, news_title: str, news_content: str, news
                 "belief": belief['belief_text'],
                 "belief_id": belief['id'],
                 "match_score": match_score,
-                "strength": belief['strength']
+                "strength": belief['strength'],
+                "counter_argument": belief.get('counter_argument')
             })
             
             if news_id:
@@ -89,7 +98,7 @@ Only return the JSON, nothing else."""
         )
         
         response_text = message.choices[0].message.content.strip()
-        result = json.loads(response_text)
+        result = _parse_llm_json(response_text)
         return float(result.get("match_score", 0.3))
     except Exception as e:
         print(f"❌ Belief matching error: {e}")

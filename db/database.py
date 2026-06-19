@@ -9,13 +9,12 @@ load_dotenv(dotenv_path=env_path)
 
 # Database connection
 def get_db_connection():
-    """Get connection to ghost_os database"""
-    conn = psycopg2.connect(
-        dbname="ghost_os",
-        user="sarayu",
-        host="localhost"
-    )
-    return conn
+    db_url = os.getenv("DATABASE_URL")
+    if db_url:
+        if db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql://", 1)
+        return psycopg2.connect(db_url)
+    return psycopg2.connect(dbname="ghost_os", user="sarayu", host="localhost")
 
 # USER OPERATIONS
 def create_user(username: str) -> int:
@@ -77,7 +76,7 @@ def get_user_beliefs(user_id: int) -> list:
     cur = conn.cursor(cursor_factory=RealDictCursor)
     
     cur.execute(
-        "SELECT id, belief_text, category, strength FROM beliefs WHERE user_id = %s",
+        "SELECT id, belief_text, category, strength, counter_argument FROM beliefs WHERE user_id = %s",
         (user_id,)
     )
     beliefs = cur.fetchall()
@@ -172,3 +171,112 @@ def delete_belief(belief_id: int) -> bool:
     finally:
         cur.close()
         conn.close()
+
+# PERSONA OPERATIONS
+def create_persona(user_id: int, full_name: str, title: str, industry: str, 
+                  audience: str, tone: str, expertise_areas: str, 
+                  years_experience: int, company: str, website: str = None) -> int:
+    """Create or update user persona"""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    try:
+        cur.execute("""
+            INSERT INTO user_personas 
+            (user_id, full_name, title, industry, audience, tone, expertise_areas, years_experience, company, website)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (user_id) DO UPDATE SET
+                full_name = EXCLUDED.full_name,
+                title = EXCLUDED.title,
+                industry = EXCLUDED.industry,
+                audience = EXCLUDED.audience,
+                tone = EXCLUDED.tone,
+                expertise_areas = EXCLUDED.expertise_areas,
+                years_experience = EXCLUDED.years_experience,
+                company = EXCLUDED.company,
+                website = EXCLUDED.website
+            RETURNING id
+        """, (user_id, full_name, title, industry, audience, tone, expertise_areas, years_experience, company, website))
+        
+        persona_id = cur.fetchone()[0]
+        conn.commit()
+        print(f"✅ Persona created/updated for user {user_id}")
+        return persona_id
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        conn.rollback()
+        return None
+    finally:
+        cur.close()
+        conn.close()
+
+def get_persona(user_id: int) -> dict:
+    """Get user persona"""
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    
+    cur.execute("""
+        SELECT full_name, title, industry, audience, tone, expertise_areas, 
+               years_experience, company, website
+        FROM user_personas WHERE user_id = %s
+    """, (user_id,))
+    
+    result = cur.fetchone()
+    cur.close()
+    conn.close()
+    
+    return dict(result) if result else None
+
+
+
+def save_linkedin_token(user_id: int, access_token: str, person_urn: str, expiry):
+    """Store LinkedIn OAuth token for a user"""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        UPDATE users SET linkedin_access_token = %s, linkedin_person_urn = %s, linkedin_token_expiry = %s
+        WHERE id = %s
+    """, (access_token, person_urn, expiry, user_id))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+def get_linkedin_token(user_id: int) -> dict:
+    """Get LinkedIn token for a user"""
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("""
+        SELECT linkedin_access_token, linkedin_person_urn, linkedin_token_expiry
+        FROM users WHERE id = %s
+    """, (user_id,))
+    result = cur.fetchone()
+    cur.close()
+    conn.close()
+    return dict(result) if result else None
+
+def store_pending_content(user_id, news_title, news_content, content_type, generated_text, quality_score, conviction_score=None, matched_beliefs=None):
+    """Store generated content for HITL review"""
+    import json
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    beliefs_json = json.dumps(matched_beliefs) if matched_beliefs else None
+
+    try:
+        cur.execute("""
+            INSERT INTO pending_content
+            (user_id, news_title, news_content, content_type, generated_text, quality_score, conviction_score, matched_beliefs_json, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'pending')
+        """, (user_id, news_title, news_content, content_type, generated_text, quality_score, conviction_score, beliefs_json))
+        
+        conn.commit()
+        print(f"✅ Saved {content_type} to dashboard for review")
+        cur.close()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"❌ Error saving content: {e}")
+        conn.rollback()
+        cur.close()
+        conn.close()
+        return False

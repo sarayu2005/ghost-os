@@ -3,9 +3,12 @@ from typing import TypedDict, Any, List
 from pydantic import BaseModel
 from services.news import fetch_ai_news
 from agents.scorers import score_relevance, score_novelty
-from agents.content_generator import generate_linkedin_post, generate_twitter_thread, generate_substack_article
+from agents.linkedin_agent import generate_linkedin_post
+from agents.content_generator import generate_twitter_thread, generate_substack_article
 from agents.belief_matcher import match_beliefs_to_news
-from db.database import store_news
+from agents.quality_judge import judge_content_quality
+from agents.persona_agent import synthesize_opinion
+from db.database import get_user_beliefs, get_db_connection, store_pending_content, store_news
 
 class PipelineState(TypedDict):
     user_id: int
@@ -24,36 +27,52 @@ class PipelineState(TypedDict):
     user_approved: bool
 
 
-def content_generator_agent(state: PipelineState) -> PipelineState:
-    """Generate content for stories that pass the conviction gate"""
-    if state["conviction_score"] < 0.65:
-        print("\n❌ Story did not pass conviction gate (< 0.65)")
-        print("   No content generated.")
-        return state
-    
-    print("\n✨ Generating content for passing story...")
-    
-    print("\n📱 Generating LinkedIn post...")
-    linkedin = generate_linkedin_post(
+def persona_synthesizer(state: PipelineState) -> PipelineState:
+    """Synthesize a unified first-person opinion before content agents run"""
+    print("\n🧠 Persona Agent: Synthesizing your opinion on this story...")
+    opinion = synthesize_opinion(
+        state['user_id'],
         state['news_story'],
         state['news_content'],
         state['matched_beliefs'],
         state['conviction_score']
     )
-    
+    state['opinion'] = opinion
+    print(f"   Opinion preview: {opinion[:120]}...")
+    return state
+
+def content_generator_agent(state: PipelineState) -> PipelineState:
+    """Generate content for stories that pass the conviction gate"""
+    print("\n✨ Generating content for passing story...")
+    opinion = state.get('opinion', '')
+
+    print("\n📱 Generating LinkedIn post...")
+    linkedin = generate_linkedin_post(
+        state['user_id'],
+        state["news_story"],
+        state['news_content'],
+        state['matched_beliefs'],
+        state['conviction_score'],
+        opinion
+    )
+
     print("🐦 Generating Twitter thread...")
     twitter = generate_twitter_thread(
         state['news_story'],
         state['news_content'],
-        state['matched_beliefs']
+        state['matched_beliefs'],
+        opinion,
+        user_id=state['user_id']
     )
-    
+
     print("📰 Generating Substack article...")
     substack = generate_substack_article(
         state['news_story'],
         state['news_content'],
         state['matched_beliefs'],
-        state['conviction_score']
+        state['conviction_score'],
+        opinion,
+        user_id=state['user_id']
     )
     
     state["content_outputs"] = {
@@ -61,7 +80,39 @@ def content_generator_agent(state: PipelineState) -> PipelineState:
         "twitter": twitter,
         "substack": substack
     }
-    
+
+    print("\n⚖️ Running quality checks...")
+    content_pieces = {
+        "linkedin": linkedin,
+        "twitter": "\n".join(twitter) if isinstance(twitter, list) else twitter,
+        "substack": substack
+    }
+
+    for content_type, generated_text in content_pieces.items():
+        if not generated_text:
+            continue
+        quality = judge_content_quality(
+            state["news_story"],
+            state["news_content"],
+            generated_text,
+            content_type,
+            state["matched_beliefs"]
+        )
+        quality_score = quality.get("overall_quality", 0.5)
+        print(f"   {content_type}: {quality_score:.2f}/1.0 ({'✅' if quality_score >= 0.65 else '❌'})")
+
+        store_pending_content(
+            state["user_id"],
+            state["news_story"],
+            state["news_content"],
+            content_type,
+            generated_text,
+            quality_score,
+            conviction_score=state["conviction_score"],
+            matched_beliefs=state["matched_beliefs"]
+        )
+
+    print("\n✅ Content saved to dashboard for review.")
     return state
 
 workflow = StateGraph(PipelineState)
@@ -122,6 +173,7 @@ workflow.add_node("filter_agent", filter_agent)
 workflow.add_node("novelty_agent", novelty_agent)
 workflow.add_node("belief_matcher_agent", belief_matcher_agent)
 workflow.add_node("conviction_scorer", conviction_scorer)
+workflow.add_node("persona_synthesizer", persona_synthesizer)
 workflow.add_node("content_generator_agent", content_generator_agent)
 
 workflow.add_edge(START, "filter_agent")
@@ -130,13 +182,14 @@ workflow.add_edge("novelty_agent", "belief_matcher_agent")
 workflow.add_edge("belief_matcher_agent", "conviction_scorer")
 
 def should_continue(state: PipelineState):
-    return "continue" if state["conviction_score"] >= 0.60 else "stop"
+    return "continue" if state["conviction_score"] >= 0.30 else "stop"
 
 workflow.add_conditional_edges(
     "conviction_scorer",
     should_continue,
-    {"continue": "content_generator_agent", "stop": END}
+    {"continue": "persona_synthesizer", "stop": END}
 )
+workflow.add_edge("persona_synthesizer", "content_generator_agent")
 workflow.add_edge("content_generator_agent", END)
 
 graph = workflow.compile()
