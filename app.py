@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, redirect, session, url_for
+from flask import Flask, render_template, request, jsonify, redirect, session, url_for, Response
 from datetime import datetime, timedelta
 import os
 import secrets
@@ -12,6 +12,21 @@ load_dotenv()
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(32))
+
+DASHBOARD_USER = os.getenv('DASHBOARD_USER', 'sarayu')
+DASHBOARD_PASS = os.getenv('DASHBOARD_PASS', '')
+
+def require_auth(f):
+    from functools import wraps
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not DASHBOARD_PASS:
+            return f(*args, **kwargs)
+        auth = request.authorization
+        if not auth or auth.username != DASHBOARD_USER or auth.password != DASHBOARD_PASS:
+            return Response('Unauthorized', 401, {'WWW-Authenticate': 'Basic realm="Ghost OS"'})
+        return f(*args, **kwargs)
+    return decorated
 
 LINKEDIN_CLIENT_ID = os.getenv('LINKEDIN_CLIENT_ID')
 LINKEDIN_CLIENT_SECRET = os.getenv('LINKEDIN_CLIENT_SECRET')
@@ -239,15 +254,18 @@ def linkedin_callback():
 # ── Dashboard routes ──────────────────────────────────────────────────────────
 
 @app.route('/')
+@require_auth
 def dashboard():
     return render_template('dashboard.html')
 
 @app.route('/api/user/<int:user_id>/pending', methods=['GET'])
+@require_auth
 def get_pending(user_id):
     pending = get_pending_content(user_id)
     return jsonify(pending)
 
 @app.route('/api/user/<int:user_id>/linkedin_status', methods=['GET'])
+@require_auth
 def linkedin_status(user_id):
     token_data = get_linkedin_token(user_id)
     if token_data and token_data.get('linkedin_access_token'):
@@ -262,6 +280,7 @@ def linkedin_status(user_id):
     return jsonify({"connected": connected and not expired, "urn": urn})
 
 @app.route('/api/content/<int:content_id>/approve', methods=['POST'])
+@require_auth
 def approve(content_id):
     data = request.json
     user_id = data.get('user_id')
@@ -294,6 +313,7 @@ def approve(content_id):
     return jsonify({"status": "approved", "linkedin": linkedin_result})
 
 @app.route('/api/content/<int:content_id>/reject', methods=['POST'])
+@require_auth
 def reject(content_id):
     data = request.json
     user_id = data.get('user_id')
@@ -302,6 +322,7 @@ def reject(content_id):
     return jsonify({"status": "rejected"})
 
 @app.route('/api/content/<int:content_id>/edit', methods=['POST'])
+@require_auth
 def edit(content_id):
     data = request.json
     user_id = data.get('user_id')
