@@ -6,6 +6,8 @@ The twist: it only writes when the news actually connects to something you belie
 
 built around one question: can a system understand what you actually think, not just how you write?
 
+**Live:** https://web-production-57e72.up.railway.app
+
 ---
 
 ## The core idea
